@@ -36,8 +36,12 @@ Resources:
       #     - Status: Enabled
       #       ExpirationInDays: 365
       
-      # MISCONFIGURATION: Public read access enabled
-      PublicReadAccess: Enabled  # This should be Disabled for security
+      # FIXED: Public access blocked via PublicAccessBlockConfiguration
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
       
       # MISCONFIGURATION: Website hosting enabled unnecessarily
       WebsiteConfiguration:
@@ -186,12 +190,12 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${BucketNamePrefix}-backup-${AWS::AccountId}-${AWS::Region}'
-      # MISCONFIGURATION: Enables public access through ACLs
+      # FIXED: Public access blocked via PublicAccessBlockConfiguration
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false        # Should be true
-        BlockPublicPolicy: false      # Should be true
-        IgnorePublicAcls: false       # Should be true
-        RestrictPublicBuckets: false  # Should be true
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
       
       # MISCONFIGURATION: No MFA delete protection
       # MfaDelete: Enabled
