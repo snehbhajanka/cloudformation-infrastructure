@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Intentionally misconfigured EC2 instance for security testing - DO NOT USE IN PRODUCTION'
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type
+  
+  KeyPairName:
+    Type: String
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Default: my-keypair
+
+Resources:
+  # VPC with public subnet - overly permissive
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: MisconfiguredVPC
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MisconfiguredIGW
+
+  # Attach IGW to VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true  # MISCONFIGURATION: Auto-assigns public IP
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: MisconfiguredPublicSubnet
+
+  # Route table for public subnet
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: MisconfiguredPublicRT
+
+  # Route to internet
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Associate route table with subnet
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # MISCONFIGURED SECURITY GROUP - Overly permissive
+  MisconfiguredSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Intentionally insecure security group - DO NOT USE IN PRODUCTION
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # MISCONFIGURATION: SSH open to the world
+          Description: SSH from anywhere - INSECURE
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0  # MISCONFIGURATION: RDP open to the world
+          Description: RDP from anywhere - INSECURE
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from anywhere
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS from anywhere
+        - IpProtocol: -1  # MISCONFIGURATION: All protocols allowed
+          CidrIp: 10.0.0.0/8  # MISCONFIGURATION: Too broad internal access
+          Description: All traffic from internal networks - OVERLY PERMISSIVE
+      SecurityGroupEgress:
+        - IpProtocol: -1  # MISCONFIGURATION: All outbound traffic allowed
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic - OVERLY PERMISSIVE
+      Tags:
+        - Key: Name
+          Value: MisconfiguredSecurityGroup
+
+  # MISCONFIGURED IAM ROLE - Overly permissive
+  MisconfiguredEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MisconfiguredEC2Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess  # MISCONFIGURATION: Too broad permissions
+        - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+      Policies:
+        - PolicyName: MisconfiguredInlinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: "*"  # MISCONFIGURATION: All actions allowed
+                Resource: "*"  # MISCONFIGURATION: All resources accessible
+      Tags:
+        - Key: Name
+          Value: MisconfiguredEC2Role
+
+  # Instance profile for the role
+  MisconfiguredInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: MisconfiguredInstanceProfile
+      Roles:
+        - !Ref MisconfiguredEC2Role
+
+  # MISCONFIGURED EC2 INSTANCE
+  MisconfiguredEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c55b159cbfafe1d0  # MISCONFIGURATION: Hardcoded AMI ID (may be outdated)
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref MisconfiguredSecurityGroup
+      IamInstanceProfile: !Ref MisconfiguredInstanceProfile
+      # MISCONFIGURATION: No encryption for root volume
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp2
+            DeleteOnTermination: true
+            # Encrypted: false  # MISCONFIGURATION: Unencrypted EBS volume (default)
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Misconfigured Server - Not for Production Use</h1>" > /var/www/html/index.html
+          # MISCONFIGURATION: Weak SSH configuration
+          echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+          echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+          systemctl restart sshd
+      Tags:
+        - Key: Name
+          Value: MisconfiguredEC2Instance
+        - Key: Environment
+          Value: Testing-Insecure
+
+Outputs:
+  InstanceId:
+    Description: Instance ID of the misconfigured EC2 instance
+    Value: !Ref MisconfiguredEC2Instance
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceId'
+  
+  PublicIp:
+    Description: Public IP address of the misconfigured instance
+    Value: !GetAtt MisconfiguredEC2Instance.PublicIp
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicIp'
+  
+  SecurityGroupId:
+    Description: Security Group ID with misconfigurations
+    Value: !Ref MisconfiguredSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroupId'
+
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCId'

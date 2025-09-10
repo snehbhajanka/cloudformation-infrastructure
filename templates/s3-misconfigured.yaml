@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Intentionally misconfigured S3 bucket for security testing - DO NOT USE IN PRODUCTION'
+
+Parameters:
+  BucketNamePrefix:
+    Type: String
+    Default: misconfigured-bucket
+    Description: Prefix for the bucket name (random suffix will be added)
+    AllowedPattern: '^[a-z0-9-]*$'
+    ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens
+
+Resources:
+  # MISCONFIGURED S3 BUCKET - Multiple security issues
+  MisconfiguredS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}'
+      # MISCONFIGURATION: No versioning enabled
+      # VersioningConfiguration:
+      #   Status: Enabled
+      
+      # MISCONFIGURATION: No encryption configured
+      # BucketEncryption:
+      #   ServerSideEncryptionConfiguration:
+      #     - ServerSideEncryptionByDefault:
+      #         SSEAlgorithm: AES256
+      
+      # MISCONFIGURATION: No access logging
+      # LoggingConfiguration:
+      #   DestinationBucketName: !Ref LoggingBucket
+      #   LogFilePrefix: access-logs/
+      
+      # MISCONFIGURATION: No lifecycle configuration (costs money unnecessarily)
+      # LifecycleConfiguration:
+      #   Rules:
+      #     - Status: Enabled
+      #       ExpirationInDays: 365
+      
+      # MISCONFIGURATION: Public read access enabled
+      PublicReadAccess: Enabled  # This should be Disabled for security
+      
+      # MISCONFIGURATION: Website hosting enabled unnecessarily
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      
+      # MISCONFIGURATION: No notification configuration for monitoring
+      # NotificationConfiguration:
+      #   CloudWatchConfigurations:
+      #     - Event: s3:ObjectCreated:*
+      
+      # MISCONFIGURATION: CORS allows any origin
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - HEAD
+            AllowedOrigins:
+              - "*"  # MISCONFIGURATION: Should be specific domains
+            MaxAge: 3600
+      
+      Tags:
+        - Key: Name
+          Value: MisconfiguredS3Bucket
+        - Key: Environment
+          Value: Testing-Insecure
+        - Key: Security
+          Value: Intentionally-Misconfigured
+
+  # MISCONFIGURED BUCKET POLICY - Overly permissive
+  MisconfiguredBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MisconfiguredS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # MISCONFIGURATION: Public read access to all objects
+          - Sid: PublicReadAccess
+            Effect: Allow
+            Principal: "*"
+            Action: 
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource: !Sub '${MisconfiguredS3Bucket}/*'
+          
+          # MISCONFIGURATION: Public write access (extremely dangerous)
+          - Sid: PublicWriteAccess
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:PutObject
+              - s3:PutObjectAcl
+              - s3:DeleteObject
+            Resource: !Sub '${MisconfiguredS3Bucket}/*'
+          
+          # MISCONFIGURATION: Public list access
+          - Sid: PublicListAccess
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:ListBucket
+              - s3:ListBucketVersions
+            Resource: !Ref MisconfiguredS3Bucket
+          
+          # MISCONFIGURATION: Overly broad access for authenticated users
+          - Sid: AuthenticatedUserFullAccess
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: "s3:*"
+            Resource: 
+              - !Ref MisconfiguredS3Bucket
+              - !Sub '${MisconfiguredS3Bucket}/*'
+            Condition:
+              StringEquals:
+                "aws:PrincipalType": "User"
+
+  # MISCONFIGURED IAM ROLE for S3 access - Too permissive
+  MisconfiguredS3AccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: MisconfiguredS3AccessRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - ec2.amazonaws.com
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+          # MISCONFIGURATION: Allows any AWS account to assume this role
+          - Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MisconfiguredS3FullAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # MISCONFIGURATION: Full S3 access to all buckets
+              - Effect: Allow
+                Action: "s3:*"
+                Resource: "*"
+              # MISCONFIGURATION: Additional unnecessary permissions
+              - Effect: Allow
+                Action:
+                  - "iam:*"
+                  - "ec2:*"
+                  - "lambda:*"
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: MisconfiguredS3AccessRole
+
+  # MISCONFIGURED S3 BUCKET ACCESS POINT - Overly permissive
+  MisconfiguredAccessPoint:
+    Type: AWS::S3::AccessPoint
+    Properties:
+      Name: misconfigured-access-point
+      Bucket: !Ref MisconfiguredS3Bucket
+      # MISCONFIGURATION: No network origin restrictions
+      # NetworkOrigin: Internet  # Should be VPC for better security
+      
+      # MISCONFIGURATION: Overly permissive policy
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: 
+              - "s3:GetObject"
+              - "s3:PutObject"
+              - "s3:DeleteObject"
+            Resource: !Sub "arn:aws:s3:${AWS::Region}:${AWS::AccountId}:accesspoint/misconfigured-access-point/object/*"
+
+  # Additional misconfigured bucket for testing
+  SecondMisconfiguredBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketNamePrefix}-backup-${AWS::AccountId}-${AWS::Region}'
+      # MISCONFIGURATION: Enables public access through ACLs
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false        # Should be true
+        BlockPublicPolicy: false      # Should be true
+        IgnorePublicAcls: false       # Should be true
+        RestrictPublicBuckets: false  # Should be true
+      
+      # MISCONFIGURATION: No MFA delete protection
+      # MfaDelete: Enabled
+      
+      Tags:
+        - Key: Name
+          Value: SecondMisconfiguredBucket
+        - Key: Purpose
+          Value: Backup-Insecure
+
+Outputs:
+  PrimaryBucketName:
+    Description: Name of the primary misconfigured S3 bucket
+    Value: !Ref MisconfiguredS3Bucket
+    Export:
+      Name: !Sub '${AWS::StackName}-PrimaryBucket'
+  
+  PrimaryBucketArn:
+    Description: ARN of the primary misconfigured S3 bucket
+    Value: !GetAtt MisconfiguredS3Bucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PrimaryBucketArn'
+  
+  SecondaryBucketName:
+    Description: Name of the secondary misconfigured S3 bucket
+    Value: !Ref SecondMisconfiguredBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-SecondaryBucket'
+  
+  BucketWebsiteURL:
+    Description: Website URL of the misconfigured bucket
+    Value: !GetAtt MisconfiguredS3Bucket.WebsiteURL
+    Export:
+      Name: !Sub '${AWS::StackName}-WebsiteURL'
+  
+  AccessPointArn:
+    Description: ARN of the misconfigured access point
+    Value: !GetAtt MisconfiguredAccessPoint.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AccessPointArn'
+  
+  IAMRoleArn:
+    Description: ARN of the misconfigured IAM role
+    Value: !GetAtt MisconfiguredS3AccessRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-IAMRoleArn'
